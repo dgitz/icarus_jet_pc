@@ -26,21 +26,31 @@ from collections import namedtuple
 from pprint import pprint
 import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), '/opt/ros/fuerte/share/mavlink/pymavlink'))
-sys.path.append('/home/linaro/catkin_ws/src/icarus_pc/src')
+sys.path.append('/home/linaro/catkin_ws/src/icarus_jet_pc/src')
 from icarus_helper import *
+import mavlinkv10 as mavlink
+import mavutil
 #from rgbdslam import *
 
 from optparse import OptionParser
 parser = OptionParser("primarycontroller.py [options]")
 #parser.add_option("--gcs-device",dest="gcs_device",default="None",help="GCS Device Connection: /dev/ttyUSB0,10.7.45.208,etc")
 #parser.add_option("--mode",dest="mode",default="None",help="net,slam,None")
-parser.add_option("--nav",dest="nav",default=False)
-parser.add_option("--slam",dest="slam",default=False)
+
 parser.add_option("--targetmode",dest="targetmode",default="Execute",help="Acquire,Train,Test,Execute")
+
+#Acquire Mode Options
 parser.add_option("--target_acquire_mode",dest="target_acquire_mode",default="Live",help="Live,Simulated")
 parser.add_option("--target_acquire_class",dest="target_acquire_class",default="None",help="Name of Target Class")
 parser.add_option("--target_acquire_count",dest="target_acquire_count",default="50",help="Number of Images to acquire")
 parser.add_option("--target_acquire_rate",dest="target_acquire_rate",default="1",help="Number of Images to acquire per second")
+
+#Execute Mode Options
+parser.add_option("--nav",dest="nav",default=False)
+parser.add_option("--slam",dest="slam",default=False)
+parser.add_option("--opticflow",dest="opticflow",default=True)
+
+#These devices should probably be set once and not modified much.
 parser.add_option("--gcs-device-type",dest="gcs_device_type",default="None",help="Serial,udp,tcp")
 parser.add_option("--gcs-device",dest="gcs_device",default="None",help="GCS Device connection: /dev/ttyUSB0,10.7.45.208")
 parser.add_option("--gcs-device-speed",dest="gcs_device_speed",default="57600")
@@ -56,8 +66,7 @@ parser.add_option("--fcgps-device-speed",dest="fcgps_device_speed",default="3840
 parser.add_option("--mc-device-type",dest="mc_device_type",default="None",help="Serial")
 parser.add_option("--mc-device",dest="mc_device",default="None")
 parser.add_option("--mc-device-speed",dest="mc_device_speed",default="57600")
-import mavlinkv10 as mavlink
-import mavutil
+
 
 (opts,args) = parser.parse_args()
 #print "Flight Controller: " + opts.fc_device
@@ -264,20 +273,44 @@ class ros_service:
 			cv2.namedWindow("RGB",2)
 			cv2.namedWindow("Depth",2)
 			self.bridge = CvBridge()
-			self.rgb_image_sub = rospy.Subscriber("/camera/rgb/color",Image,self.cb_newRGBImg)
-			self.depth_image_sub = rospy.Subscriber("/camera/depth_registered/image_rect",Image,self.cb_newDepthImg)
+			self.rgb_image_sub = rospy.Subscriber("/camera/rgb/color",Image,self.cb_new_front_RGBImg)
+			self.depth_image_sub = rospy.Subscriber("/camera/depth_registered/image_rect",Image,self.cb_new_front_DepthImg)
 			device_pc.enableprint = True
+			if opts.opticflow == True:
+				cv2.namedWindow("Optic Flow",2)
 			print "Mode: Execute"
-	def cb_newRGBImg(self,data):
+	def cb_new_front_RGBImg(self,data):
 		global rgb_image
+		global old_gray_image
 		try:
+			old_gray_image = cv2.cvtColor(rgb_image,cv2.COLOR_BGR2GRAY)
 			im = self.bridge.imgmsg_to_cv(data)
 			rgb_image = np.array(im)
 			cv2.imshow("RGB",rgb_image)
 			cv2.waitKey(1)
+			if opts.opticflow == True:
+				feature_params = dict(maxCorners=100,qualityLevel=.3,minDistance=7,blockSize=7)
+				lk_params = dict(winSize=(15,15),maxLevel=2,criteria=(cv2.TERM_CRITERIA_EPS|cv2.TERM_CRITERIA_COUNT,10,.03))
+				color = np.random.randint(0,255,(100,3))
+				p0 = cv2.goodFeaturesToTrack(old_gray_image,mask=None,**feature_params)
+				mask = np.zeros_like(rgb_image)
+				gray_image = cv2.cvtColor(rgb_image,cv2.COLOR_BGR2GRAY)
+				p1,st,err = cv2.calcOpticalFlowPyrLK(old_gray_image,gray_image,p0,None,**lk_params)
+				good_new = p1[st==1]
+				good_old = p0[st==1]
+				for i,(new,old) in enumerate(zip(good_new,good_old)):
+					a,b = new.ravel()
+					c,d = old.ravel()
+					mask = cv2.line(mask,(a,b),(c,d),color[i].tolist(),2)
+					rgb_image = cv2.circle(rgb_image,(a,b),5,color[i].tolist(),-1)
+				img = cv2.add(rgb_image,mask)
+				cv2.imshow('Optic Flow',img)
+				cv2.waitKey(1)
+				p0 = good_new.reshape(-1,1,2)
+				
 		except CvBridgeError,e:
 			print e
-	def cb_newDepthImg(self,data):
+	def cb_new_front_DepthImg(self,data):
 		global depth_img
 		try:
 			im = self.bridge.imgmsg_to_cv(data)
@@ -374,20 +407,12 @@ def mainloop():
 	#device_mc.changemode(mavlink.MAV_MODE_MANUAL_DISARMED)
 
 	while not rospy.is_shutdown():
-		#time.sleep(1)
-		#tempstr = 'image{}.png'.format(imagenum)
-		#imagenum = imagenum + 1
-		#print tempstr
-		#cv2.imwrite(tempstr,color_image)
-		#time.sleep(.001)
 		rospy.sleep(0.001)
 		lasttime = curtime
 		curtime = time.time()
 		elapsedtime = (curtime-lasttime)
 		boottime = int((curtime-starttime)*1000)
-		#sprint boottime
 		updaterate = 1/elapsedtime #Hz
-		#print updaterate
 		dt = datetime.datetime.now()
 	
 		tempstr = "New Latitude: {:.10f} Longitude: {:.10f} Alt: {:.4f}".format(curlocation[0],curlocation[1],curlocation[2]) 
@@ -986,6 +1011,9 @@ def initvariables():
 	global min_dist_sector_in
 	global lasttime_depth
 	global mask_image
+	global rgb_image
+	global old_gray_image
+	rgb_image = np.zeros((480,640,3),np.uint8)
 	lasttime_depth = 0
 	imagenum = 0
 	num_condensed_array_rows = 3
