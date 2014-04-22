@@ -1,0 +1,2 @@
+- setup-file:
+    local-name: /home/linaro/catkin_ws/src/icarus_jet_pc/devel/setup.sh

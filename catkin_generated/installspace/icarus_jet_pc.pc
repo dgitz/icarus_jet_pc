@@ -1,0 +1,6 @@
+Name: icarus_jet_pc
+Description: Description of icarus_jet_pc
+Version: 0.0.0
+Cflags: -I
+Libs: -L/usr/local/lib 
+Requires: 

@@ -1,0 +1,7 @@
+set(_CATKIN_CURRENT_PACKAGE "icarus_jet_pc")
+set(icarus_jet_pc_MAINTAINER "linaro <linaro@todo.todo>")
+set(icarus_jet_pc_DEPRECATED "")
+set(icarus_jet_pc_VERSION "0.0.0")
+set(icarus_jet_pc_BUILD_DEPENDS "cv_bridge" "roscpp" "rospy" "sensor_msgs" "std_msgs")
+set(icarus_jet_pc_RUN_DEPENDS "cv_bridge" "roscpp" "rospy" "sensor_msgs" "std_msgs")
+set(icarus_jet_pc_BUILDTOOL_DEPENDS "catkin")

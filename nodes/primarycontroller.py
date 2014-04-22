@@ -48,7 +48,7 @@ parser.add_option("--target_acquire_rate",dest="target_acquire_rate",default="1"
 #Execute Mode Options
 parser.add_option("--nav",dest="nav",default=False)
 parser.add_option("--slam",dest="slam",default=False)
-parser.add_option("--opticflow",dest="opticflow",default=True)
+parser.add_option("--opticflow",dest="opticflow",default=False)
 
 #These devices should probably be set once and not modified much.
 parser.add_option("--gcs-device-type",dest="gcs_device_type",default="None",help="Serial,udp,tcp")
@@ -63,9 +63,9 @@ parser.add_option("--fc-device-speed",dest="fc_device_speed",default="115200")
 parser.add_option("--fcgps-device-type",dest="fcgps_device_type",default="None",help="Serial")
 parser.add_option("--fcgps-device",dest="fcgps_device",default="None",help="FC Device connection: /dev/ttyUSB0")
 parser.add_option("--fcgps-device-speed",dest="fcgps_device_speed",default="38400")
-parser.add_option("--mc-device-type",dest="mc_device_type",default="None",help="Serial")
-parser.add_option("--mc-device",dest="mc_device",default="None")
-parser.add_option("--mc-device-speed",dest="mc_device_speed",default="57600")
+parser.add_option("--mc-device-type",dest="mc_device_type",default="Serial",help="Serial")
+parser.add_option("--mc-device",dest="mc_device",default="/dev/ttyUSB0")
+parser.add_option("--mc-device-speed",dest="mc_device_speed",default="115200")
 
 
 (opts,args) = parser.parse_args()
@@ -141,7 +141,7 @@ device_fc.type = "UAV"
 if opts.mc_device <> "None":
 	if opts.mc_device_type == "Serial":
 		device_mc = device(enabled=True,name="Motion Controller",conn=str(opts.mc_device))
-		device_mc.device = serial.Serial(opts.mc_device,57600,timeout=1)
+		device_mc.device = serial.Serial(opts.mc_device,115200,timeout=1)
 		device_mc.protocol = "ICARUS"
 		device_mc.appenderror(calc_errorcode(SYSTEM_FLYER_MC,ERRORTYPE_NOERROR,SEVERITY_CAUTION,MESSAGE_INITIALIZING))
 	else:
@@ -254,12 +254,22 @@ if slam_enabled:
 my_MissionItems = []
 #WaypointStruct = namedtuple('WaypointStruct',['seq','frame','command','current','autocontinue','param1','param2','param3','param4','x','y','z'])
 
+#Optic Flow Initialization Stuff
+
+
+if opts.opticflow == True:
+	feature_params = dict(maxCorners=100,qualityLevel=.3,minDistance=7,blockSize=7)
+	lk_params = dict(winSize=(15,15),maxLevel=4,criteria=(cv2.TERM_CRITERIA_EPS|cv2.TERM_CRITERIA_COUNT,10,.03))
+	color = np.random.randint(0,255,(100,3))
+	
+
 class ros_service:
 	
 	def __init__(self):
 		#pdb.set_trace()
 		if targetmode == "Acquire":
-			cv2.namedWindow("RGB",1)
+			if device_pc.enableprint:
+				cv2.namedWindow("RGB",1)
 			self.bridge = CvBridge()
 			self.image_sub = rospy.Subscriber("/camera/rgb/color",Image,self.callbackCameraAcquire)
 			device_pc.enableprint = False
@@ -270,43 +280,66 @@ class ros_service:
 			device_gcs.enableprint = False
 			print 'Mode: Acquire'
 		elif targetmode == 'Execute':
-			cv2.namedWindow("RGB",2)
-			cv2.namedWindow("Depth",2)
+			if device_pc.enableprint:
+				cv2.namedWindow("RGB",2)
+				cv2.namedWindow("Depth",2)
 			self.bridge = CvBridge()
 			self.rgb_image_sub = rospy.Subscriber("/camera/rgb/color",Image,self.cb_new_front_RGBImg)
 			self.depth_image_sub = rospy.Subscriber("/camera/depth_registered/image_rect",Image,self.cb_new_front_DepthImg)
-			device_pc.enableprint = True
+			
 			if opts.opticflow == True:
-				cv2.namedWindow("Optic Flow",2)
+				if device_pc.enableprint:
+					cv2.namedWindow("Optic Flow",2)
 			print "Mode: Execute"
 	def cb_new_front_RGBImg(self,data):
 		global rgb_image
 		global old_gray_image
+		global optic_flow_mask
+		global optic_flow_init
 		try:
-			old_gray_image = cv2.cvtColor(rgb_image,cv2.COLOR_BGR2GRAY)
+			
+			if optic_flow_init == True:
+				#pdb.set_trace()
+				old_gray_image = cv2.cvtColor(rgb_image,cv2.COLOR_BGR2GRAY)
 			im = self.bridge.imgmsg_to_cv(data)
+			
 			rgb_image = np.array(im)
-			cv2.imshow("RGB",rgb_image)
-			cv2.waitKey(1)
-			if opts.opticflow == True:
-				feature_params = dict(maxCorners=100,qualityLevel=.3,minDistance=7,blockSize=7)
-				lk_params = dict(winSize=(15,15),maxLevel=2,criteria=(cv2.TERM_CRITERIA_EPS|cv2.TERM_CRITERIA_COUNT,10,.03))
-				color = np.random.randint(0,255,(100,3))
+			frame = np.copy(rgb_image)
+			if device_pc.enableprint:
+				cv2.imshow("RGB",rgb_image)
+				cv2.waitKey(1)
+			if (optic_flow_init == True and opts.opticflow == True):
+				optic_flow_mask = np.zeros_like(rgb_image)
 				p0 = cv2.goodFeaturesToTrack(old_gray_image,mask=None,**feature_params)
-				mask = np.zeros_like(rgb_image)
+				
 				gray_image = cv2.cvtColor(rgb_image,cv2.COLOR_BGR2GRAY)
 				p1,st,err = cv2.calcOpticalFlowPyrLK(old_gray_image,gray_image,p0,None,**lk_params)
 				good_new = p1[st==1]
 				good_old = p0[st==1]
+				delx = dely = 0
+				count = 0
 				for i,(new,old) in enumerate(zip(good_new,good_old)):
+					count = count + 1
 					a,b = new.ravel()
 					c,d = old.ravel()
-					mask = cv2.line(mask,(a,b),(c,d),color[i].tolist(),2)
-					rgb_image = cv2.circle(rgb_image,(a,b),5,color[i].tolist(),-1)
-				img = cv2.add(rgb_image,mask)
-				cv2.imshow('Optic Flow',img)
-				cv2.waitKey(1)
+					
+					cv2.line(optic_flow_mask,(a,b),(c,d),color[i].tolist(),2)
+					#cv2.circle(frame,(a,b),5,color[i].tolist(),-1)
+					delx = delx + (a-c)
+					dely = dely + (b-d)
+				if count > 0:
+					delx = delx/(count)
+					dely = dely/(count)
+					print 'DelX:{} DelY: {}'.format(delx,dely)
+					#cv2.line(optic_flow_mask,(320,240),(int(delx*10),int(dely*10)),color[i].tolist(),2)				
+				img = cv2.add(frame,optic_flow_mask)
+				if device_pc.enableprint:
+					cv2.imshow('Optic Flow',img)
+					cv2.waitKey(1)
 				p0 = good_new.reshape(-1,1,2)
+			if (optic_flow_init == False and opts.opticflow == True):
+				
+				optic_flow_init = True
 				
 		except CvBridgeError,e:
 			print e
@@ -315,8 +348,9 @@ class ros_service:
 		try:
 			im = self.bridge.imgmsg_to_cv(data)
 			depth_image = np.array(im)
-			cv2.imshow("Depth",depth_image)
-			cv2.waitKey(1)
+			if device_pc.enableprint:
+				cv2.imshow("Depth",depth_image)
+				cv2.waitKey(1)
 		except CvBridgeError,e:
 			print e
 	def callbackCameraAcquire(self,data):
@@ -328,11 +362,13 @@ class ros_service:
 				tempstr = 'Image{:04d}.png'.format(imagenum)
 				color_im = self.bridge.imgmsg_to_cv(data)
 				color_image = np.array(color_im)
-				cv2.imshow("RGB",color_image)
+				
 				filename = '{}{}'.format(target_acquire_classdir,tempstr)
 				cv2.imwrite(filename,color_image)
 				print 'Image: {}/{} Completed.'.format(imagenum,target_acquire_count)
-				cv2.waitKey(1)
+				if device_pc.enableprint:
+					cv2.imshow("RGB",color_image)
+					cv2.waitKey(1)
 			else:
 				print 'Image Acquisition Finished'
 				
@@ -1013,6 +1049,8 @@ def initvariables():
 	global mask_image
 	global rgb_image
 	global old_gray_image
+	global optic_flow_init
+	optic_flow_init = False
 	rgb_image = np.zeros((480,640,3),np.uint8)
 	lasttime_depth = 0
 	imagenum = 0

@@ -6,7 +6,6 @@ project(icarus_jet_pc)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
   cv_bridge
-  opencv
   roscpp
   rospy
   sensor_msgs
@@ -107,6 +106,8 @@ include_directories(
 
 ## Declare a cpp executable
 # add_executable(icarus_jet_pc_node src/icarus_jet_pc_node.cpp)
+add_executable(xtionsender nodes/xtionsender.cpp)
+target_link_libraries(xtionsender $(
 
 ## Add cmake target dependencies of the executable/library
 ## as an example, message headers may need to be generated before nodes
