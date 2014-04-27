@@ -64,8 +64,10 @@ parser.add_option("--fcgps-device-type",dest="fcgps_device_type",default="None",
 parser.add_option("--fcgps-device",dest="fcgps_device",default="None",help="FC Device connection: /dev/ttyUSB0")
 parser.add_option("--fcgps-device-speed",dest="fcgps_device_speed",default="38400")
 parser.add_option("--mc-device-type",dest="mc_device_type",default="Serial",help="Serial")
-parser.add_option("--mc-device",dest="mc_device",default="/dev/ttyUSB0")
+parser.add_option("--mc-device",dest="mc_device",default="None",help="/dev/ttyUSB0")
 parser.add_option("--mc-device-speed",dest="mc_device_speed",default="115200")
+parser.add_option("--sim-device-type",dest="sim_device_type",default="UDP")
+parser.add_option("--sim-device",dest="sim_device")
 
 
 (opts,args) = parser.parse_args()
@@ -215,12 +217,26 @@ device_remote.setcolor(TERM_WHITE)
 device_remote.update_rate = 5.0
 device_remote.type = "CONTROL"
 
+if opts.sim_device <> "None":
+	if opts.sim_device_type =="UDP":
+		sim_ip = "192.168.0.102"
+		sim_port = 12345
+		device_sim  = device(enabled=True,name="Simulator",conn=(sim_ip,sim_port))
+		device_sim_socket=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+		device_sim_socket.bind(('',sim_port))
+		device_sim.appenderror(calc_errorcode(SYSTEM_SIMULATOR,ERRORTYPE_NOERROR,SEVERITY_CAUTION,MESSAGE_INITIALIZING))
+		device_sim.protocol = "ICARUS"
+device_sim.setcolor(TERM_WHITE)
+device_sim.update_rate = 20.0
+device_sim.type = "CONTROL"
+
 device_pc.enableprint = True
 device_fc.enableprint = True
 device_fcgps.enableprint = True
 device_mc.enableprint = True
 device_remote.enableprint = True
 device_gcs.enableprint = True
+device_sim.enableprint = True
 
 
 
@@ -238,6 +254,8 @@ device_gcs.display()
 
 device_remote.display()
 #device_remote.display_errors()
+device_sim.display()
+
 
 #ROS Publishers
 
@@ -497,7 +515,6 @@ def mainloop():
 		GPRMC = "GPRMC,{},A,{},N,0{},W,{:.1f},0.0,{},0.0,E,".format(GPS_Time,GPS_Lat,GPS_Long,ground_speed,GPS_Date)
 		a = calcchecksum(GPRMC)		
 		GPRMC = "${}*{}\r\n".format(GPRMC,a)  #GPRMC message is ready for transmission
-
 		#Prepare GPGGA Message
 		GPGGA = "GPGGA,{},{},N,0{},W,3,12,0,{},,0,,,".format(GPS_Time,GPS_Lat,GPS_Long,GPS_Alt)
 		a = calcchecksum(GPGGA)
@@ -513,7 +530,7 @@ def mainloop():
 		if device_pc.enabled == True:
 			if ((boottime - device_pc.last_update)>(1/device_pc.update_rate*1000.0)):
 				device_pc.last_update = boottime
-				device_pc.display()
+				#device_pc.display()
 		if device_fc.enabled == True:
 			update_device(device_fc)
 			print "a"
@@ -567,6 +584,12 @@ def mainloop():
 				pub_data_to_fc_gps.publish(GPVTG)
 				device_fcgps.device.write(GPGGA)
 				pub_data_to_fc_gps.publish(GPGGA)
+		if device_sim.enabled == True:
+			update_device(device_sim)
+			if ((boottime - device_sim.last_update)>(1/device_sim.update_rate*1000.0)):
+				device_sim.last_update = boottime
+				#device_sim.display()
+				device_sim_socket.sendto("$SIM,MAN,1234,5678,246,890,1,2,3,4*",(sim_ip,sim_port))
 		
 		#Assume Pre-Flight Checks have been completed.  Go to MANUAL_DISARMED Mode and MAV_STATE_STANDBY if No Errors
 		#if device_pc.mode == mavlink.MAV_MODE_PREFLIGHT:
@@ -866,7 +889,11 @@ def update_device(m):
 					device_fc.printtext(str(msg))
 	if m.protocol == "ICARUS":
 		try:
-			msg = device_mc.device.readline()
+			if m.device == device_mc.device:
+				msg = device_mc.device.readline()
+			elif m.device==device_sim.device:
+				msg = device_sim_socket.recv(3)
+				print msg
 			
 			#device_mc.printtext(msg)
 			if msg[0] == "$" and msg[len(msg)-3]=="*":
