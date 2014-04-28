@@ -1,6 +1,0 @@
-Name: icarus_jet_pc
-Description: Description of icarus_jet_pc
-Version: 0.0.0
-Cflags: -I
-Libs: -L/home/linaro/catkin_ws/src/icarus_jet_pc/devel/lib 
-Requires: 

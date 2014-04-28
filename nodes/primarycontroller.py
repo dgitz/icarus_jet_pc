@@ -1,6 +1,6 @@
 #!/usr/bin/python
 import roslib
-#roslib.load_manifest('rgbdslam')
+roslib.load_manifest('icarus_jet_pc')
 import rospy
 from std_msgs.msg import String, Header
 from sensor_msgs.msg import NavSatFix, NavSatStatus, Imu,CameraInfo
@@ -26,31 +26,21 @@ from collections import namedtuple
 from pprint import pprint
 import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), '/opt/ros/fuerte/share/mavlink/pymavlink'))
-sys.path.append('/home/linaro/catkin_ws/src/icarus_jet_pc/src')
+sys.path.append('/home/linaro/catkin_ws/src/icarus_pc/src')
 from icarus_helper import *
-import mavlinkv10 as mavlink
-import mavutil
 #from rgbdslam import *
 
 from optparse import OptionParser
 parser = OptionParser("primarycontroller.py [options]")
 #parser.add_option("--gcs-device",dest="gcs_device",default="None",help="GCS Device Connection: /dev/ttyUSB0,10.7.45.208,etc")
 #parser.add_option("--mode",dest="mode",default="None",help="net,slam,None")
-
-parser.add_option("--targetmode",dest="targetmode",default="Execute",help="Acquire,Train,Test,Execute")
-
-#Acquire Mode Options
+parser.add_option("--nav",dest="nav",default=False)
+parser.add_option("--slam",dest="slam",default=False)
+parser.add_option("--targetmode",dest="targetmode",default="None",help="Acquire,Train,Test,Execute")
 parser.add_option("--target_acquire_mode",dest="target_acquire_mode",default="Live",help="Live,Simulated")
 parser.add_option("--target_acquire_class",dest="target_acquire_class",default="None",help="Name of Target Class")
 parser.add_option("--target_acquire_count",dest="target_acquire_count",default="50",help="Number of Images to acquire")
 parser.add_option("--target_acquire_rate",dest="target_acquire_rate",default="1",help="Number of Images to acquire per second")
-
-#Execute Mode Options
-parser.add_option("--nav",dest="nav",default=False)
-parser.add_option("--slam",dest="slam",default=False)
-parser.add_option("--opticflow",dest="opticflow",default=False)
-
-#These devices should probably be set once and not modified much.
 parser.add_option("--gcs-device-type",dest="gcs_device_type",default="None",help="Serial,udp,tcp")
 parser.add_option("--gcs-device",dest="gcs_device",default="None",help="GCS Device connection: /dev/ttyUSB0,10.7.45.208")
 parser.add_option("--gcs-device-speed",dest="gcs_device_speed",default="57600")
@@ -63,12 +53,11 @@ parser.add_option("--fc-device-speed",dest="fc_device_speed",default="115200")
 parser.add_option("--fcgps-device-type",dest="fcgps_device_type",default="None",help="Serial")
 parser.add_option("--fcgps-device",dest="fcgps_device",default="None",help="FC Device connection: /dev/ttyUSB0")
 parser.add_option("--fcgps-device-speed",dest="fcgps_device_speed",default="38400")
-parser.add_option("--mc-device-type",dest="mc_device_type",default="Serial",help="Serial")
-parser.add_option("--mc-device",dest="mc_device",default="None",help="/dev/ttyUSB0")
-parser.add_option("--mc-device-speed",dest="mc_device_speed",default="115200")
-parser.add_option("--sim-device-type",dest="sim_device_type",default="UDP")
-parser.add_option("--sim-device",dest="sim_device")
-
+parser.add_option("--mc-device-type",dest="mc_device_type",default="None",help="Serial")
+parser.add_option("--mc-device",dest="mc_device",default="None")
+parser.add_option("--mc-device-speed",dest="mc_device_speed",default="57600")
+import mavlinkv10 as mavlink
+import mavutil
 
 (opts,args) = parser.parse_args()
 #print "Flight Controller: " + opts.fc_device
@@ -143,7 +132,7 @@ device_fc.type = "UAV"
 if opts.mc_device <> "None":
 	if opts.mc_device_type == "Serial":
 		device_mc = device(enabled=True,name="Motion Controller",conn=str(opts.mc_device))
-		device_mc.device = serial.Serial(opts.mc_device,115200,timeout=1)
+		device_mc.device = serial.Serial(opts.mc_device,57600,timeout=1)
 		device_mc.protocol = "ICARUS"
 		device_mc.appenderror(calc_errorcode(SYSTEM_FLYER_MC,ERRORTYPE_NOERROR,SEVERITY_CAUTION,MESSAGE_INITIALIZING))
 	else:
@@ -217,26 +206,12 @@ device_remote.setcolor(TERM_WHITE)
 device_remote.update_rate = 5.0
 device_remote.type = "CONTROL"
 
-if opts.sim_device <> "None":
-	if opts.sim_device_type =="UDP":
-		sim_ip = "192.168.0.102"
-		sim_port = 12345
-		device_sim  = device(enabled=True,name="Simulator",conn=(sim_ip,sim_port))
-		device_sim_socket=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
-		device_sim_socket.bind(('',sim_port))
-		device_sim.appenderror(calc_errorcode(SYSTEM_SIMULATOR,ERRORTYPE_NOERROR,SEVERITY_CAUTION,MESSAGE_INITIALIZING))
-		device_sim.protocol = "ICARUS"
-device_sim.setcolor(TERM_WHITE)
-device_sim.update_rate = 20.0
-device_sim.type = "CONTROL"
-
 device_pc.enableprint = True
 device_fc.enableprint = True
 device_fcgps.enableprint = True
 device_mc.enableprint = True
 device_remote.enableprint = True
 device_gcs.enableprint = True
-device_sim.enableprint = True
 
 
 
@@ -254,8 +229,6 @@ device_gcs.display()
 
 device_remote.display()
 #device_remote.display_errors()
-device_sim.display()
-
 
 #ROS Publishers
 
@@ -272,22 +245,12 @@ if slam_enabled:
 my_MissionItems = []
 #WaypointStruct = namedtuple('WaypointStruct',['seq','frame','command','current','autocontinue','param1','param2','param3','param4','x','y','z'])
 
-#Optic Flow Initialization Stuff
-
-
-if opts.opticflow == True:
-	feature_params = dict(maxCorners=100,qualityLevel=.3,minDistance=7,blockSize=7)
-	lk_params = dict(winSize=(15,15),maxLevel=4,criteria=(cv2.TERM_CRITERIA_EPS|cv2.TERM_CRITERIA_COUNT,10,.03))
-	color = np.random.randint(0,255,(100,3))
-	
-
 class ros_service:
 	
 	def __init__(self):
 		#pdb.set_trace()
 		if targetmode == "Acquire":
-			if device_pc.enableprint:
-				cv2.namedWindow("RGB",1)
+			cv2.namedWindow("RGB",1)
 			self.bridge = CvBridge()
 			self.image_sub = rospy.Subscriber("/camera/rgb/color",Image,self.callbackCameraAcquire)
 			device_pc.enableprint = False
@@ -296,81 +259,7 @@ class ros_service:
 			device_mc.enableprint = False
 			device_remote.enableprint = False
 			device_gcs.enableprint = False
-			print 'Mode: Acquire'
-		elif targetmode == 'Execute':
-			if device_pc.enableprint:
-				cv2.namedWindow("RGB",2)
-				cv2.namedWindow("Depth",2)
-			self.bridge = CvBridge()
-			self.rgb_image_sub = rospy.Subscriber("/camera/rgb/color",Image,self.cb_new_front_RGBImg)
-			self.depth_image_sub = rospy.Subscriber("/camera/depth_registered/image_rect",Image,self.cb_new_front_DepthImg)
-			
-			if opts.opticflow == True:
-				if device_pc.enableprint:
-					cv2.namedWindow("Optic Flow",2)
-			print "Mode: Execute"
-	def cb_new_front_RGBImg(self,data):
-		global rgb_image
-		global old_gray_image
-		global optic_flow_mask
-		global optic_flow_init
-		try:
-			
-			if optic_flow_init == True:
-				#pdb.set_trace()
-				old_gray_image = cv2.cvtColor(rgb_image,cv2.COLOR_BGR2GRAY)
-			im = self.bridge.imgmsg_to_cv(data)
-			
-			rgb_image = np.array(im)
-			frame = np.copy(rgb_image)
-			if device_pc.enableprint:
-				cv2.imshow("RGB",rgb_image)
-				cv2.waitKey(1)
-			if (optic_flow_init == True and opts.opticflow == True):
-				optic_flow_mask = np.zeros_like(rgb_image)
-				p0 = cv2.goodFeaturesToTrack(old_gray_image,mask=None,**feature_params)
-				
-				gray_image = cv2.cvtColor(rgb_image,cv2.COLOR_BGR2GRAY)
-				p1,st,err = cv2.calcOpticalFlowPyrLK(old_gray_image,gray_image,p0,None,**lk_params)
-				good_new = p1[st==1]
-				good_old = p0[st==1]
-				delx = dely = 0
-				count = 0
-				for i,(new,old) in enumerate(zip(good_new,good_old)):
-					count = count + 1
-					a,b = new.ravel()
-					c,d = old.ravel()
-					
-					cv2.line(optic_flow_mask,(a,b),(c,d),color[i].tolist(),2)
-					#cv2.circle(frame,(a,b),5,color[i].tolist(),-1)
-					delx = delx + (a-c)
-					dely = dely + (b-d)
-				if count > 0:
-					delx = delx/(count)
-					dely = dely/(count)
-					print 'DelX:{} DelY: {}'.format(delx,dely)
-					#cv2.line(optic_flow_mask,(320,240),(int(delx*10),int(dely*10)),color[i].tolist(),2)				
-				img = cv2.add(frame,optic_flow_mask)
-				if device_pc.enableprint:
-					cv2.imshow('Optic Flow',img)
-					cv2.waitKey(1)
-				p0 = good_new.reshape(-1,1,2)
-			if (optic_flow_init == False and opts.opticflow == True):
-				
-				optic_flow_init = True
-				
-		except CvBridgeError,e:
-			print e
-	def cb_new_front_DepthImg(self,data):
-		global depth_img
-		try:
-			im = self.bridge.imgmsg_to_cv(data)
-			depth_image = np.array(im)
-			if device_pc.enableprint:
-				cv2.imshow("Depth",depth_image)
-				cv2.waitKey(1)
-		except CvBridgeError,e:
-			print e
+			print 'Starting Image Acquisition'
 	def callbackCameraAcquire(self,data):
 		global imagenum
 		try:
@@ -380,13 +269,11 @@ class ros_service:
 				tempstr = 'Image{:04d}.png'.format(imagenum)
 				color_im = self.bridge.imgmsg_to_cv(data)
 				color_image = np.array(color_im)
-				
+				cv2.imshow("RGB",color_image)
 				filename = '{}{}'.format(target_acquire_classdir,tempstr)
 				cv2.imwrite(filename,color_image)
 				print 'Image: {}/{} Completed.'.format(imagenum,target_acquire_count)
-				if device_pc.enableprint:
-					cv2.imshow("RGB",color_image)
-					cv2.waitKey(1)
+				cv2.waitKey(1)
 			else:
 				print 'Image Acquisition Finished'
 				
@@ -405,8 +292,6 @@ def mainloop():
 	global Initial_Yaw_rad
 	global my_MissionItems
 	global imagenum
-	global rgb_image
-	global depth_image
 	my_MissionItems = []
 	#device_gcs.display()
 	first_attitude_packet = True
@@ -461,12 +346,20 @@ def mainloop():
 	#device_mc.changemode(mavlink.MAV_MODE_MANUAL_DISARMED)
 
 	while not rospy.is_shutdown():
+		#time.sleep(1)
+		#tempstr = 'image{}.png'.format(imagenum)
+		#imagenum = imagenum + 1
+		#print tempstr
+		#cv2.imwrite(tempstr,color_image)
+		#time.sleep(.001)
 		rospy.sleep(0.001)
 		lasttime = curtime
 		curtime = time.time()
 		elapsedtime = (curtime-lasttime)
 		boottime = int((curtime-starttime)*1000)
+		#sprint boottime
 		updaterate = 1/elapsedtime #Hz
+		#print updaterate
 		dt = datetime.datetime.now()
 	
 		tempstr = "New Latitude: {:.10f} Longitude: {:.10f} Alt: {:.4f}".format(curlocation[0],curlocation[1],curlocation[2]) 
@@ -515,6 +408,7 @@ def mainloop():
 		GPRMC = "GPRMC,{},A,{},N,0{},W,{:.1f},0.0,{},0.0,E,".format(GPS_Time,GPS_Lat,GPS_Long,ground_speed,GPS_Date)
 		a = calcchecksum(GPRMC)		
 		GPRMC = "${}*{}\r\n".format(GPRMC,a)  #GPRMC message is ready for transmission
+
 		#Prepare GPGGA Message
 		GPGGA = "GPGGA,{},{},N,0{},W,3,12,0,{},,0,,,".format(GPS_Time,GPS_Lat,GPS_Long,GPS_Alt)
 		a = calcchecksum(GPGGA)
@@ -530,7 +424,7 @@ def mainloop():
 		if device_pc.enabled == True:
 			if ((boottime - device_pc.last_update)>(1/device_pc.update_rate*1000.0)):
 				device_pc.last_update = boottime
-				#device_pc.display()
+				device_pc.display()
 		if device_fc.enabled == True:
 			update_device(device_fc)
 			print "a"
@@ -584,12 +478,6 @@ def mainloop():
 				pub_data_to_fc_gps.publish(GPVTG)
 				device_fcgps.device.write(GPGGA)
 				pub_data_to_fc_gps.publish(GPGGA)
-		if device_sim.enabled == True:
-			update_device(device_sim)
-			if ((boottime - device_sim.last_update)>(1/device_sim.update_rate*1000.0)):
-				device_sim.last_update = boottime
-				#device_sim.display()
-				device_sim_socket.sendto("$SIM,MAN,1234,5678,246,890,1,2,3,4*",(sim_ip,sim_port))
 		
 		#Assume Pre-Flight Checks have been completed.  Go to MANUAL_DISARMED Mode and MAV_STATE_STANDBY if No Errors
 		#if device_pc.mode == mavlink.MAV_MODE_PREFLIGHT:
@@ -889,11 +777,7 @@ def update_device(m):
 					device_fc.printtext(str(msg))
 	if m.protocol == "ICARUS":
 		try:
-			if m.device == device_mc.device:
-				msg = device_mc.device.readline()
-			elif m.device==device_sim.device:
-				msg = device_sim_socket.recv(3)
-				print msg
+			msg = device_mc.device.readline()
 			
 			#device_mc.printtext(msg)
 			if msg[0] == "$" and msg[len(msg)-3]=="*":
@@ -1074,11 +958,6 @@ def initvariables():
 	global min_dist_sector_in
 	global lasttime_depth
 	global mask_image
-	global rgb_image
-	global old_gray_image
-	global optic_flow_init
-	optic_flow_init = False
-	rgb_image = np.zeros((480,640,3),np.uint8)
 	lasttime_depth = 0
 	imagenum = 0
 	num_condensed_array_rows = 3
