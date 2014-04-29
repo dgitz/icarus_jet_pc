@@ -222,15 +222,19 @@ if opts.sim_device <> "None":
 		try:
 			sim_ip = "192.168.0.102"
 			sim_port = 5005
-			tempstr = "tcp:"+str(sim_ip)+str(":") + str(sim_port)
-			device_sim  = device(enabled=True,name="Simulator",conn=str(tempstr))
+			tempstr = "udp:"+str(sim_ip)+str(":") + str(sim_port)
 			
-		
+			device_sim = device(enabled=True,name="Simulator",conn=str(tempstr))
+			print 'Please initialize Simulation Client'
 			device_sim.appenderror(calc_errorcode(SYSTEM_SIMULATOR,ERRORTYPE_NOERROR,SEVERITY_CAUTION,MESSAGE_INITIALIZING))
 			device_sim.protocol = "ICARUS"
-			device_sim.device = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-			device_sim.device.connect((sim_ip,sim_port))
-		
+			#device_sim.socket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+			#device_sim.socket.bind(('192.168.0.107',5005))
+			#device_sim.socket.listen(1)
+			#device_sim.device,device_sim.addr = device_sim.socket.accept()
+			#pdb.set_trace()
+			device_sim_socket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+			device_sim_socket.bind(('',sim_port))
 
 			
 		except socket.error as e:
@@ -598,12 +602,14 @@ def mainloop():
 			
 			#update_device(device_sim)
 			if ((boottime - device_sim.last_update)>(1/device_sim.update_rate*1000.0)):
-				pdb.set_trace()
+				
 				device_sim.last_update = boottime
 				#device_sim.display()
-				device_sim.device.sendall("$SIM,MAN,1234,5678,246,890,1,2,3,4*")
+				#device_sim.device.send("$SIM,MAN,1234,5678,246,890,1,2,3,4*")
 				#udp_send("$SIM,MAN,1234,5678,246,890,1,2,3,4*",sim_ip,sim_port)
-				
+				data,addr = device_sim_socket.recvfrom(256)
+				print data,addr
+				device_sim_socket.sendto("$SIM,MAN,1234,5678,246,890,1,2,3,4*",addr)
 		
 		#Assume Pre-Flight Checks have been completed.  Go to MANUAL_DISARMED Mode and MAV_STATE_STANDBY if No Errors
 		#if device_pc.mode == mavlink.MAV_MODE_PREFLIGHT:
@@ -644,11 +650,10 @@ def init_device(m):
 def udp_send(data,addr,port):
 	s = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
 	s.sendto(data,(addr,port))
-	s.close()
 def udp_recv(addr,port,buf_size):
 	try:
 		s = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
-		s.connect(('',12346))
+		s.connect(('',12345))
 		s.settimeout(1)
 	
 		data,sender_addr = s.recvfrom(10)
@@ -925,10 +930,11 @@ def update_device(m):
 			if m.device == device_mc.device:
 				msg = device_mc.device.readline()
 			elif m.device==device_sim.device:
-				#msg = udp_recv(sim_ip,sim_port,3)
+				print 'Trying to receive'
+				msg = udp_recv(sim_ip,sim_port,3)
 				dumb = 1
 				
-				#print msg
+				print msg
 			
 			#device_mc.printtext(msg)
 			if msg[0] == "$" and msg[len(msg)-3]=="*":
