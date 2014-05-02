@@ -227,13 +227,22 @@ if opts.sim_device <> "None":
 			tempstr = "udp:"+str(sim_ip)+str(":") + str(sim_recvport)
 			
 			device_sim = device(enabled=True,name="Simulator",conn=str(tempstr))
-			print 'Please initialize Simulation Client'
+			
 			device_sim.appenderror(calc_errorcode(SYSTEM_SIMULATOR,ERRORTYPE_NOERROR,SEVERITY_CAUTION,MESSAGE_INITIALIZING))
 			device_sim.protocol = "ICARUS"
 			#device_sim_socket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
 			#device_sim_socket.bind(('',sim_recvport))
 			device_sim.device=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
 			device_sim.device.bind(('',sim_recvport))
+			FL = 1000*np.ones((4,1))
+			FR = 1000*np.ones((4,1))
+			BL = 1000*np.ones((4,1))
+			BR = 1000*np.ones((4,1))
+			FL_error = np.zeros((4,1))
+			FR_error = np.zeros((4,1))
+			BL_error = np.zeros((4,1))
+			BR_error = np.zeros((4,1))
+			Altitude_PID = PID(P=800, I=0.0, D=0.0, Derivator=0, Integrator=0, Integrator_max=500, Integrator_min=-500)
 			
 		except socket.error as e:
 			print e
@@ -415,6 +424,8 @@ def mainloop():
 	global Current_X_meter
 	global Current_Y_meter
 	global Current_Z_meter
+	global Current_vog_x
+	global Current_vog_y 
 	global starttime
 	global first_attitude_packet
 	global Initial_Yaw_rad
@@ -423,6 +434,11 @@ def mainloop():
 	global rgb_image
 	global depth_image
 	global sim_sendport
+	global Sim_State
+	global FL_speed
+	global FR_speed
+	global BL_speed
+	global BR_speed
 	my_MissionItems = []
 	#device_gcs.display()
 	first_attitude_packet = True
@@ -468,7 +484,7 @@ def mainloop():
 	print "Waiting..."
 	rospy.sleep(1)
 	#device_mc.changemode(mavlink.MAV_MODE_MANUAL_DISARMED)	
-	
+	Altitude_PID.setPoint(2.5)
         
 	#device_fc.changemode(mavlink.MAV_MODE_PREFLIGHT)
 	
@@ -491,7 +507,11 @@ def mainloop():
 		#print tempstr
 		tempstr = "Delta(m) x: {:.4f} y: {:.4f} z: {:.4f}".format(curx,cury,curz)
 		#print tempstr
-		tempstr = "X:{:.4f} Y:{:.4f} Z:{:.4f} Pitch:{:.2f} Roll:{:.2f} Yaw:{:.2f}".format(Current_X_meter,Current_Y_meter,Current_Z_meter,Current_Pitch_rad,Current_Roll_rad,Current_Yaw_rad)
+		tempstr = "x:{:.4f} y:{:.4f} z:{:.4f} Pitch:{:.2f} Roll:{:.2f} Yaw:{:.2f}".format(Current_X_meter,Current_Y_meter,Current_Z_meter,Current_Pitch_rad,Current_Roll_rad,Current_Yaw_rad)
+		#print tempstr
+		tempstr = "v-x:{:.4f} v-y:{:.4f}".format(Current_vog_x,Current_vog_y) 
+		#print tempstr
+		tempstr = "Sim State:{}".format(Sim_State)
 		print tempstr
 		del_ground_dist = math.sqrt(math.pow((curx-lastx),2)+math.pow((cury-lasty),2))
 		ground_speed = (del_ground_dist/elapsedtime)*100.0 #(cm/s)
@@ -551,14 +571,11 @@ def mainloop():
 				#device_pc.display()
 		if device_fc.enabled == True:
 			update_device(device_fc)
-			print "a"
 			if ((boottime - device_fc.last_update)>(1/device_fc.update_rate*1000.0)):
 				device_fc.last_update = boottime
 				device_fc.display()
 				#device_fc.changemode(APM_CIRCLE)
 		if device_gcs.enabled == True:
-			#Lmit Rate of GCS Updates
-#boottime = int((curtime-starttime)*1000)
 			update_device(device_gcs)
 			if ((boottime - device_gcs.last_update)>(1/device_gcs.update_rate*1000.0)):
 				device_gcs.last_update = boottime
@@ -610,8 +627,30 @@ def mainloop():
 				device_sim.last_update = boottime
 				#device_sim.display()
 				
+				FL[0] = FR[0] = BL[0] = BR[0] = Altitude_PID.update(Current_Z_meter)
+				print FL[0]
+				for i in range(0, 1):
+					FL_error[i] = int(FL_speed-FL[i])
+					FR_error[i] = int(FR_speed-FR[i])
+					BL_error[i] = int(BL_speed-BL[i])
+					BR_error[i] = int(BR_speed-BR[i])
+				
+				FL_index = np.argmax(FL_error[:])
+				FL_speed = FL[FL_index]
+				FR_index = np.argmax(FR_error[:])
+				FR_speed = FR[FR_index]
+				BL_index = np.argmax(BL_error[:])
+				BL_speed = BL[BL_index]	
+				BR_index = np.argmax(BR_error[:])
+				BR_speed = BR[BR_index]
+				
 				if sim_sendport > 0:
-					device_sim.device.sendto("$SIM,MAN,1234,5678,246,890,1,2,3,4*",sim_sendport)
+					dumb = 1					
+					device_sim.device.sendto("$SIM,MAN,1500,1500,1500,1500,1,2,3,4*",sim_sendport)
+				if Sim_State == SIM_STATE_ERROR:  #Some Flight error, need to reset Simulator
+					device_sim.device.sendto("$SIM,CON,1*",sim_sendport)
+
+				
 		
 		#Assume Pre-Flight Checks have been completed.  Go to MANUAL_DISARMED Mode and MAV_STATE_STANDBY if No Errors
 		#if device_pc.mode == mavlink.MAV_MODE_PREFLIGHT:
@@ -673,11 +712,15 @@ def update_device(m):
 	global Current_X_meter
 	global Current_Y_meter
 	global Current_Z_meter
+	global Current_vog_x
+	global Current_vog_y 
 	global fc_badpacket_counter
 	global first_attitude_packet
 	global Initial_Yaw_rad
 	global my_MissionItems
 	global sim_sendport
+	global Sim_State
+	
 	if (m.protocol == "MAVLINK") or (m.protocol == "APM_MAVLINK"): 
 		msg = m.device.recv_match(blocking=False)
 		#pub_data_from_fc.publish(str(msg.get_type()))
@@ -976,10 +1019,16 @@ def update_device(m):
 						Current_X_meter = float(contents[2])
 						Current_Y_meter = float(contents[3])
 						Current_Z_meter = float(contents[4])
+					elif contents[1] == "VOG":
+						Current_vog_x = float(contents[2])
+						Current_vog_y = float(contents[3])
 				elif contents[0] == "SRV":
 					dumb = 1
 				elif contents[0] == "PWMIN":
 					print msg
+				elif contents[0] == "SIM":
+					if contents[1] == "STATE":
+						Sim_State = int(contents[2])
 				else:
 					print msg
 		except:
@@ -1130,6 +1179,18 @@ def initvariables():
 	global rgb_image
 	global old_gray_image
 	global optic_flow_init
+	global Current_vog_x
+	global Current_vog_y 
+	global Sim_State
+	global FL_speed
+	global FR_speed
+	global BL_speed
+	global BR_speed
+	FL_speed = 1000
+	FR_speed = 1000
+	BL_speed = 1000
+	BR_speed = 1000
+	Sim_State = 0
 	optic_flow_init = False
 	rgb_image = np.zeros((480,640,3),np.uint8)
 	lasttime_depth = 0
@@ -1158,6 +1219,8 @@ def initvariables():
 	Current_X_meter = 0.0
 	Current_Y_meter = 0.0
 	Current_Z_meter = 0.0
+	Current_vog_x = 0.0
+	Current_vog_y = 0.0
 	fc_badpacket_counter = 0
 	WaypointCount = 0	
 	

@@ -72,6 +72,11 @@ TERM_PURPLE = "35;1m"
 TERM_BLUE = "36;1m"
 TERM_WHITE = "39;20m"
 
+#Simulator States
+SIM_STATE_NORMAL = 0
+SIM_STATE_ERROR = 1
+SIM_STATE_INIT = 2
+
 
 
 def calc_errorcode(system,errortype,severity,message):
