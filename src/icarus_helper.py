@@ -446,7 +446,9 @@ class PID:
 
 		self.set_point=0.0
 		self.error=0.0
-
+	def reset(self):
+		self.Integrator = 0.0
+		
 	def update(self,current_value):
 		"""
 		Calculate PID output value for given reference input and feedback
@@ -468,6 +470,11 @@ class PID:
 		self.I_value = self.Integrator * self.Ki
 
 		PID = self.P_value + self.I_value + self.D_value
+		if PID > 2000:
+			PID = 2000
+		elif PID < 1000:
+			PID = 1000
+		
 
 		return PID
 

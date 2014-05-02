@@ -234,6 +234,7 @@ if opts.sim_device <> "None":
 			#device_sim_socket.bind(('',sim_recvport))
 			device_sim.device=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
 			device_sim.device.bind(('',sim_recvport))
+			device_sim.init = False
 			FL = 1000*np.ones((4,1))
 			FR = 1000*np.ones((4,1))
 			BL = 1000*np.ones((4,1))
@@ -242,7 +243,10 @@ if opts.sim_device <> "None":
 			FR_error = np.zeros((4,1))
 			BL_error = np.zeros((4,1))
 			BR_error = np.zeros((4,1))
-			Altitude_PID = PID(P=800, I=0.0, D=0.0, Derivator=0, Integrator=0, Integrator_max=500, Integrator_min=-500)
+			Altitude_PID = PID(P=1200, I=5, D=5, Derivator=0, Integrator=0, Integrator_max=500, Integrator_min=-500)
+			Roll_PID = PID(P=1200, I=5, D=5, Derivator=0, Integrator=0, Integrator_max=500, Integrator_min=-500)
+			Pitch_PID = PID(P=1200, I=5, D=5, Derivator=0, Integrator=0, Integrator_max=500, Integrator_min=-500)
+			Yaw_PID = PID(P=1200, I=5, D=5, Derivator=0, Integrator=0, Integrator_max=500, Integrator_min=-500)
 			
 		except socket.error as e:
 			print e
@@ -485,6 +489,10 @@ def mainloop():
 	rospy.sleep(1)
 	#device_mc.changemode(mavlink.MAV_MODE_MANUAL_DISARMED)	
 	Altitude_PID.setPoint(2.5)
+	Roll_PID.setPoint(0.0)
+	Pitch_PID.setPoint(0.0)
+	Yaw_PID.setPoint(0.0)
+	
         
 	#device_fc.changemode(mavlink.MAV_MODE_PREFLIGHT)
 	
@@ -622,33 +630,51 @@ def mainloop():
 		if device_sim.enabled == True:
 			
 			update_device(device_sim)
-			if ((boottime - device_sim.last_update)>(1/device_sim.update_rate*1000.0)):
-				
+			if ((boottime - device_sim.last_update)>(1/device_sim.update_rate*1000.0)):		
 				device_sim.last_update = boottime
 				#device_sim.display()
+				FL[0] = BL[0] = Roll_PID.update(Current_Roll_rad)
+				FR[0] = BR[0] = 2000-BL[0]
 				
-				FL[0] = FR[0] = BL[0] = BR[0] = Altitude_PID.update(Current_Z_meter)
-				print FL[0]
-				for i in range(0, 1):
-					FL_error[i] = int(FL_speed-FL[i])
-					FR_error[i] = int(FR_speed-FR[i])
-					BL_error[i] = int(BL_speed-BL[i])
-					BR_error[i] = int(BR_speed-BR[i])
+				FL[1] = FR[1] = Pitch_PID.update(Current_Pitch_rad)
+				BL[1] = BR[1] = 2000-FL[1]
+
+				FL[2] = BR[2] = Yaw_PID.update(Current_Yaw_rad)
+				FR[2] = BL[2] = 2000-FL[2]
+				
+				FL[3] = FR[3] = BL[3] = BR[3] = Altitude_PID.update(Current_Z_meter)
+				
+				for i in range(0, 4):
+					FL_error[i] = int(FL[i])
+					FR_error[i] = int(FR[i])
+					BL_error[i] = int(BL[i])
+					BR_error[i] = int(BR[i])
 				
 				FL_index = np.argmax(FL_error[:])
-				FL_speed = FL[FL_index]
+				FL_speed = int(FL[FL_index])
 				FR_index = np.argmax(FR_error[:])
-				FR_speed = FR[FR_index]
+				FR_speed = int(FR[FR_index])
 				BL_index = np.argmax(BL_error[:])
-				BL_speed = BL[BL_index]	
+				BL_speed = int(BL[BL_index])	
 				BR_index = np.argmax(BR_error[:])
-				BR_speed = BR[BR_index]
-				
+				BR_speed = int(BR[BR_index])
+				print FL_index,FR_index,BL_index,BR_index
+				if device_sim.init == False:
+					if sim_sendport > 0:
+						device_sim.device.sendto("$SIM,CON,1*",sim_sendport)
+						device_sim.init = True
 				if sim_sendport > 0:
 					dumb = 1					
-					device_sim.device.sendto("$SIM,MAN,1500,1500,1500,1500,1,2,3,4*",sim_sendport)
+					#device_sim.device.sendto("$SIM,MAN,1500,1500,1500,1500,1,2,3,4*",sim_sendport)
+					man_sentence = "$SIM,MAN,{},{},{},{},1,2,3,4*".format(FL_speed,FR_speed,BL_speed,BR_speed)
+					#print man_sentence
+					device_sim.device.sendto(man_sentence,sim_sendport)
 				if Sim_State == SIM_STATE_ERROR:  #Some Flight error, need to reset Simulator
 					device_sim.device.sendto("$SIM,CON,1*",sim_sendport)
+					Roll_PID.reset()
+					Pitch_PID.reset()
+					Yaw_PID.reset()
+					Altitude_PID.reset()
 
 				
 		

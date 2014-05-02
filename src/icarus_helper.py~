@@ -18,7 +18,7 @@ SYSTEM_FLYER_FCGPS = "13"
 SYSTEM_FLYER_MC = "14"
 SYSTEM_GCS = "50"
 SYSTEM_REMOTE = "70"
-SYSTEM_SIMUATLR = "90"
+SYSTEM_SIMULATOR = "90"
 
 #Field 2
 ERRORTYPE_NOERROR = "0"
@@ -71,6 +71,11 @@ TERM_YELLOW = "33;1m"
 TERM_PURPLE = "35;1m"
 TERM_BLUE = "36;1m"
 TERM_WHITE = "39;20m"
+
+#Simulator States
+SIM_STATE_NORMAL = 0
+SIM_STATE_ERROR = 1
+SIM_STATE_INIT = 2
 
 
 
@@ -463,6 +468,11 @@ class PID:
 		self.I_value = self.Integrator * self.Ki
 
 		PID = self.P_value + self.I_value + self.D_value
+		if PID > 2000:
+			PID = 2000
+		elif PID < 1000:
+			PID = 1000
+		
 
 		return PID
 
