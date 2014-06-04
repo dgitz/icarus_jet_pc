@@ -69,6 +69,7 @@ parser.add_option("--mc-device-speed",dest="mc_device_speed",default="115200")
 parser.add_option("--sim-device-type",dest="sim_device_type",default="UDP")
 parser.add_option("--sim-device",dest="sim_device")
 
+parser.add_option("--EA-mode",dest="EA_mode",default="Train",help="Train,None")
 
 (opts,args) = parser.parse_args()
 #print "Flight Controller: " + opts.fc_device
@@ -77,7 +78,54 @@ parser.add_option("--sim-device",dest="sim_device")
 #print "Remote: " + opts.remote_device
 
 #WaypointStruct = namedtuple('WaypointStruct',['seq','frame','command','current','autocontinue','param1','param2','param3','param4','x','y','z'])
- 
+def EA_fsm_handler(state):
+	if state == "TAKEOFF":
+		Altitude_PID.setPoint(2.5)
+		Roll_PID.setPoint(0.0)
+		Pitch_PID.setPoint(0.0)
+		Yaw_PID.setPoint(0.0)
+	elif state == "HOVER":
+		Altitude_PID.setPoint(2.5)
+		Roll_PID.setPoint(0.0)
+		Pitch_PID.setPoint(0.0)
+		Yaw_PID.setPoint(0.0)
+	elif state == "FORWARD":
+		Altitude_PID.setPoint(2.5)
+		Roll_PID.setPoint(0.0)
+		Pitch_PID.setPoint(1.5)
+		Yaw_PID.setPoint(0.0)
+	elif state == "ROLL-LEFT":
+		Altitude_PID.setPoint(2.5)
+		Roll_PID.setPoint(1.5)
+		Pitch_PID.setPoint(0)
+		Yaw_PID.setPoint(0.0)
+	elif state == "ROLL-RIGHT":
+		Altitude_PID.setPoint(2.5)
+		Roll_PID.setPoint(-1.5)
+		Pitch_PID.setPoint(0)
+		Yaw_PID.setPoint(0.0)
+	elif state == "YAW-LEFT":
+		Altitude_PID.setPoint(2.5)
+		Roll_PID.setPoint(0.0)
+		Pitch_PID.setPoint(0)
+		Yaw_PID.setPoint(-1.5)
+	elif state == "BACKWARD":
+		Altitude_PID.setPoint(2.5)
+		Roll_PID.setPoint(0.0)
+		Pitch_PID.setPoint(-1.5)
+		Yaw_PID.setPoint(0)
+	elif state == "YAW-RIGHT":
+		Altitude_PID.setPoint(2.5)
+		Roll_PID.setPoint(0.0)
+		Pitch_PID.setPoint(0)
+		Yaw_PID.setPoint(1.5)
+	elif state == "LAND":
+		Altitude_PID.setPoint(0)
+		Roll_PID.setPoint(0.0)
+		Pitch_PID.setPoint(0)
+		Yaw_PID.setPoint(0)
+	else:
+		print 'Undefined EA State' 
 		
 
 #my_MissionItems.append(missionitem())
@@ -305,6 +353,12 @@ if opts.opticflow == True:
 	lk_params = dict(winSize=(15,15),maxLevel=4,criteria=(cv2.TERM_CRITERIA_EPS|cv2.TERM_CRITERIA_COUNT,10,.03))
 	color = np.random.randint(0,255,(100,3))
 	
+if opts.EA_mode == "Train":
+	#EA_fsm_states=["TAKEOFF","HOVER","FORWARD","HOVER","ROLL-LEFT","HOVER","YAW-LEFT","BACKWARD","HOVER","YAW-RIGHT","ROLL-RIGHT","HOVER","YAW-RIGHT","LAND"]
+	EA_fsm_states=["TAKEOFF","HOVER","LAND"]
+	EA_fsm_index = 0
+	
+	EA_fsm_handler(EA_fsm_states[EA_fsm_index])
 
 class ros_service:
 	
@@ -443,6 +497,7 @@ def mainloop():
 	global FR_speed
 	global BL_speed
 	global BR_speed
+	global EA_fsm_index
 	my_MissionItems = []
 	#device_gcs.display()
 	first_attitude_packet = True
@@ -488,11 +543,8 @@ def mainloop():
 	print "Waiting..."
 	rospy.sleep(1)
 	#device_mc.changemode(mavlink.MAV_MODE_MANUAL_DISARMED)	
-	Altitude_PID.setPoint(2.5)
-	Roll_PID.setPoint(0.0)
-	Pitch_PID.setPoint(0.0)
-	Yaw_PID.setPoint(0.0)
-	
+	EA_timer = 0.0
+	print EA_fsm_states[EA_fsm_index]
         
 	#device_fc.changemode(mavlink.MAV_MODE_PREFLIGHT)
 	
@@ -508,7 +560,6 @@ def mainloop():
 		boottime = int((curtime-starttime)*1000)
 		updaterate = 1/elapsedtime #Hz
 		dt = datetime.datetime.now()
-	
 		tempstr = "New Latitude: {:.10f} Longitude: {:.10f} Alt: {:.4f}".format(curlocation[0],curlocation[1],curlocation[2]) 
 		#print tempstr
 		tempstr = "Init Latitude: {:.14f} Longitude: {:.14f} Alt: {:.4f}".format(initiallocation[0],initiallocation[1],initiallocation[2])
@@ -628,7 +679,18 @@ def mainloop():
 				device_fcgps.device.write(GPGGA)
 				pub_data_to_fc_gps.publish(GPGGA)
 		if device_sim.enabled == True:
+			EA_timer = EA_timer + elapsedtime
 			
+			if EA_timer > 3.0:
+				EA_timer = 0.0
+				
+				EA_fsm_index = EA_fsm_index + 1
+				if EA_fsm_index > len(EA_fsm_states)-1:
+					print 'Finished Flight Maneuvers'
+				else:
+					print EA_fsm_states[EA_fsm_index]
+					EA_fsm_handler(EA_fsm_states[EA_fsm_index])
+				
 			update_device(device_sim)
 			if ((boottime - device_sim.last_update)>(1/device_sim.update_rate*1000.0)):		
 				device_sim.last_update = boottime
@@ -658,7 +720,7 @@ def mainloop():
 				BL_speed = int(BL[BL_index])	
 				BR_index = np.argmax(BR_error[:])
 				BR_speed = int(BR[BR_index])
-				print FL_index,FR_index,BL_index,BR_index
+				#print FL_index,FR_index,BL_index,BR_index
 				if device_sim.init == False:
 					if sim_sendport > 0:
 						device_sim.device.sendto("$SIM,CON,1*",sim_sendport)
@@ -1062,6 +1124,8 @@ def update_device(m):
 			
 		
 
+
+
 def statemode_fsm(fc_device,target_fc_state,target_fc_mode):
 	if pc_state == mavlink.MAV_STATE_BOOT:
 		device_pc.printtext("Still Booting")
@@ -1212,6 +1276,8 @@ def initvariables():
 	global FR_speed
 	global BL_speed
 	global BR_speed
+	global EA_fsm_index
+	EA_fsm_index = 0
 	FL_speed = 1000
 	FR_speed = 1000
 	BL_speed = 1000
