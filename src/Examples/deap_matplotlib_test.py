@@ -42,6 +42,12 @@ toolbox.register("mate", tools.cxTwoPoint)
 toolbox.register("mutate", tools.mutFlipBit, indpb=0.05)
 toolbox.register("select", tools.selTournament, tournsize=3)
 fitness_avg = []
+h1, = plt.plot([],[])
+fig1 = plt.figure()
+def update_line(h1,new_data):
+        h1.set_xdata(np.append(h1.get_xdata(),new_data[0]))
+        h1.set_ydata(np.append(h1.get_ydata(),new_data[1]))
+        fig1.show()
 def main():
     random.seed(10)
     
@@ -103,14 +109,14 @@ def main():
         print("  Max %s" % max(fits))
         print("  Avg %s" % mean)
         print("  Std %s" % std)
+        
+        update_line(h1,(g,np.mean(fitnesses)))
+        
     
     print("-- End of (successful) evolution --")
     
     best_ind = tools.selBest(pop, 1)[0]
     print("Best individual is %s, %s" % (best_ind, best_ind.fitness.values))
-    x = range(g+1)
-    fig,ax = plt.subplots()
-    plt.plot(x,fitness_avg)
     plt.show()	
 if __name__ == "__main__":
     main()
